@@ -26,6 +26,26 @@
 - Python 3.10以上
 - [uv](https://github.com/astral-sh/uv) (推奨) または pip
 - [Claude Code CLI](https://claude.ai/code)
+- [fd](https://github.com/sharkdp/fd) (推奨) - `.gitignore`を考慮した高速ファイル検索
+
+### fdのインストール（推奨）
+fdをインストールすると、`.gitignore`を自動的に考慮してファイル変更を検出します：
+
+```bash
+# macOS
+brew install fd
+
+# Ubuntu/Debian
+apt install fd-find
+
+# その他のLinux
+cargo install fd-find
+
+# Windows (scoop)
+scoop install fd
+```
+
+※ fdがなくても動作しますが、findコマンドを使用するため`.gitignore`は考慮されません。
 
 ### クイックスタート（推奨）
 

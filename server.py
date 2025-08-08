@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -62,8 +63,8 @@ async def main():
     else:
         logger.info("No watched directories configured. Use index_directory tool or set MCP_WATCH_DIR_* env vars.")
     
-    # Check if find command is available
-    find_available = False
+    # Check which file search command is available (prefer fd over find)
+    file_search_cmd = None
     system_platform = platform.system()
     
     if system_platform == "Windows":
@@ -71,15 +72,25 @@ async def main():
         logger.info("To enable auto-update functionality, consider:")
         logger.info("  1. Using WSL (Windows Subsystem for Linux)")
         logger.info("  2. Installing Git Bash which includes find")
-        logger.info("  3. Using the manual index_directory tool")
+        logger.info("  3. Installing fd (https://github.com/sharkdp/fd)")
+        logger.info("  4. Using the manual index_directory tool")
     else:
+        # Try fd first (respects .gitignore automatically)
         try:
-            result = subprocess.run(['find', '--version'], capture_output=True, text=True)
-            find_available = True
-            logger.info(f"Running on {system_platform} - find command available for file change detection")
+            result = subprocess.run(['fd', '--version'], capture_output=True, text=True)
+            file_search_cmd = 'fd'
+            logger.info(f"Running on {system_platform} - using fd (respects .gitignore) for file change detection")
         except FileNotFoundError:
-            logger.warning(f"find command not available on {system_platform}")
-            logger.warning("Periodic re-indexing will be disabled")
+            # Fall back to find
+            try:
+                result = subprocess.run(['find', '--version'], capture_output=True, text=True)
+                file_search_cmd = 'find'
+                logger.info(f"Running on {system_platform} - using find for file change detection")
+                logger.info("Tip: Install fd (https://github.com/sharkdp/fd) for better performance and .gitignore support")
+            except FileNotFoundError:
+                logger.warning(f"Neither fd nor find command available on {system_platform}")
+                logger.warning("Periodic re-indexing will be disabled")
+                logger.info("Install fd: brew install fd (macOS) or apt install fd-find (Linux)")
     
     # Start periodic re-indexing task with find-based change detection
     reindex_interval = config.get('reindex_interval_seconds', 300)
@@ -92,7 +103,7 @@ async def main():
         timestamp_file.touch()
     
     async def periodic_reindex():
-        """Periodically re-index changed files using find command"""
+        """Periodically re-index changed files using fd/find command"""
         nonlocal reindex_running
         
         while not shutdown_event.is_set():
@@ -109,7 +120,7 @@ async def main():
                 continue
             
             reindex_running = True
-            logger.info(f"Starting periodic re-index using find... timestamp_file: {timestamp_file}")
+            logger.info(f"Starting periodic re-index using {file_search_cmd}... timestamp_file: {timestamp_file}")
             logger.info(f"Watched directories: {watched_dirs}")
             
             try:
@@ -118,10 +129,20 @@ async def main():
                 for directory in watched_dirs:
                     try:
                         # Find files modified since last check
-                        find_cmd = ['find', directory, '-type', 'f', '-newer', str(timestamp_file)]
-                        logger.info(f"Running find command: {' '.join(find_cmd)}")
+                        if file_search_cmd == 'fd':
+                            # fd respects .gitignore by default
+                            search_cmd = ['fd', '--type', 'f', '--changed-within', 
+                                        f"{int(time.time() - timestamp_file.stat().st_mtime)}s",
+                                        '.', directory]
+                        elif file_search_cmd == 'find':
+                            search_cmd = ['find', directory, '-type', 'f', '-newer', str(timestamp_file)]
+                        else:
+                            logger.warning("No file search command available, skipping re-index")
+                            return
+                        
+                        logger.info(f"Running {file_search_cmd} command: {' '.join(search_cmd)}")
                         result = subprocess.run(
-                            find_cmd,
+                            search_cmd,
                             capture_output=True,
                             text=True,
                             check=False  # Don't raise exception on non-zero return
@@ -129,11 +150,11 @@ async def main():
                         
                         # Check for command not found error
                         if result.returncode == 127 or 'not found' in result.stderr.lower():
-                            logger.error("find command not available on this system")
+                            logger.error(f"{file_search_cmd} command not available on this system")
                             logger.info("Periodic re-indexing will be disabled")
                             return  # Exit the periodic_reindex function
                         
-                        logger.info(f"Find command result - returncode: {result.returncode}, stdout: '{result.stdout}', stderr: '{result.stderr}'")
+                        logger.info(f"{file_search_cmd.capitalize()} command result - returncode: {result.returncode}, stdout: '{result.stdout}', stderr: '{result.stderr}'")
                         
                         if result.returncode == 0 and result.stdout:
                             changed_files = result.stdout.strip().split('\n')
@@ -215,10 +236,10 @@ async def main():
                 logger.info("Periodic re-index completed")
     
     # Create background task for periodic re-indexing
-    if reindex_interval > 0 and find_available:
+    if reindex_interval > 0 and file_search_cmd:
         asyncio.create_task(periodic_reindex())
         logger.info(f"Periodic re-indexing enabled (every {reindex_interval} seconds)")
-    elif reindex_interval > 0 and not find_available:
+    elif reindex_interval > 0 and not file_search_cmd:
         logger.warning("Periodic re-indexing requested but find command not available")
         logger.info("Use manual index_directory tool to update the index")
     else:
