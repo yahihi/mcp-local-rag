@@ -1,24 +1,30 @@
 # MCP Local RAG 🚀
 
-プロジェクトごとに独立したインデックスを持つ、ローカルファイルRAGシステム。
+高速で効率的なローカルファイルRAG（Retrieval-Augmented Generation）システム。
 [Claude Code](https://claude.ai/code)のMCP（Model Context Protocol）サーバーとして動作します。
 
 ## ✨ 特徴
 
-### 🎯 プロジェクト自動認識
-- 作業ディレクトリを自動検出
-- プロジェクトごとに独立したインデックス
-- コンテキストに応じた検索結果
+### 🚀 高速起動
+- 埋め込みモデルのキャッシュ機能
+- 初回起動後は約3秒で起動完了
+- 軽量なall-MiniLM-L6-v2モデル使用
 
-### 🔄 リアルタイム同期
-- ファイル変更を自動検知
-- インデックスを即座に更新
-- 常に最新のコードベースを検索
+### 🔄 自動インデックス更新
+- 30秒ごとにファイル変更を自動検知
+- 新規ファイルの追加、既存ファイルの変更、削除を検出
+- fd（推奨）またはfindコマンドを使用
+- `.gitignore`を自動的に考慮（fd使用時）
 
-### 🔍 高度な検索
-- セマンティック検索
-- 類似ファイル検索
-- コンテキスト抽出
+### 🎯 インテリジェントなファイル管理
+- 指定ディレクトリを自動監視
+- 削除されたファイルを自動検出・クリーンアップ
+- 重複エントリを防ぐハッシュベースの変更検出
+
+### 🔍 高度な検索機能
+- セマンティック検索で意味的に関連するコードを発見
+- 類似ファイル検索で関連コードを探索
+- 特定行周辺のコンテキスト抽出
 
 ## 📦 インストール
 
@@ -55,16 +61,17 @@ git clone https://github.com/yourusername/mcp-local-rag.git
 cd mcp-local-rag
 
 # 2. セットアップ & 初回インデックス作成（重要！）
-# 現在のディレクトリをインデックス
-./setup.sh .
+# 対象プロジェクトをインデックス
+./setup.sh ~/projects/my-app
 
 # または複数のプロジェクトを一度にインデックス
-./setup.sh /path/to/project1 /path/to/project2
+./setup.sh ~/projects/app1 ~/projects/app2
 
 # 3. Claude Codeに登録（環境変数でディレクトリを指定）
-claude mcp add local-rag $(pwd)/run.sh \
-  -e MCP_WATCH_DIR_1="/path/to/project1" \
-  -e MCP_WATCH_DIR_2="/path/to/project2"
+# 注: run.shへのフルパスを指定してください
+claude mcp add local-rag ~/mcp-local-rag/run.sh \
+  -e MCP_WATCH_DIR_1="$HOME/projects/app1" \
+  -e MCP_WATCH_DIR_2="$HOME/projects/app2"
 
 # 4. Claude Desktopを再起動
 ```
@@ -84,36 +91,32 @@ pkill -f "python.*server.py"
 ```bash
 # 1. config.jsonを編集して監視ディレクトリを設定
 vim config.json
-# "auto_index": {
-#   "watch_directories": ["/path/to/project1", "/path/to/project2"]
-# }
+# "watch_directories": ["/path/to/project1", "/path/to/project2"],
+# "reindex_interval_seconds": 30
 
 # 2. セットアップ（config.jsonの設定を使用）
 ./setup.sh
 
 # 3. Claude Codeに登録
-claude mcp add local-rag $(pwd)/run.sh
+claude mcp add local-rag /path/to/mcp-local-rag/run.sh
 ```
 
 ### 静音モード（ログ抑制）
 
 ```bash
 # デバッグログを表示したくない場合
-claude mcp add local-rag $(pwd)/run_quiet.sh \
-  -e MCP_WATCH_DIR_1="$(pwd)"
+claude mcp add local-rag /path/to/mcp-local-rag/run_quiet.sh \
+  -e MCP_WATCH_DIR_1="/path/to/your/project"
 ```
 
 ## 🚀 使い方
 
 ### 基本的な使い方
 
-1. **プロジェクトディレクトリに移動**
-   ```bash
-   cd /path/to/your/project
-   ```
-   自動的にプロジェクトとして認識され、専用のインデックスが作成されます。
-
-2. **Claude Code内で検索**
+1. **Claude Code内で対話**
+   事前に設定したプロジェクトディレクトリが自動的にインデックスされ、検索可能になります。
+   
+2. **検索例**
    ```
    "Search for authentication implementation"
    "Find files similar to main.py"
@@ -133,52 +136,41 @@ claude mcp add local-rag $(pwd)/run_quiet.sh \
 
 ## 🏗️ アーキテクチャ
 
-### プロジェクト分離
+### データ構造
 ```
 data/index/
-├── chroma/
-│   ├── project_app1/     # プロジェクト1専用
-│   ├── project_app2/     # プロジェクト2専用
-│   └── project_app3/     # プロジェクト3専用
-└── projects.json         # プロジェクト管理
+├── chroma/               # ChromaDBベクトルデータベース
+└── file_metadata.json    # ファイルメタデータ（ハッシュ、インデックス日時）
 ```
 
 ### 技術スタック
 - **ベクトルDB**: ChromaDB
-- **埋め込みモデル**: 
-  - OpenAI text-embedding-3-small
-  - Sentence-Transformers (ローカル)
-- **ファイル監視**: Watchdog
+- **埋め込みモデル**: Sentence-Transformers (all-MiniLM-L6-v2)
+- **ファイル変更検出**: fd（推奨）またはfindコマンド
 - **MCPプロトコル**: 標準準拠
+- **定期更新**: 30秒ごとの自動再インデックス
 
 ## ⚙️ 設定
 
-### グローバル設定 (`config.json`)
+### 設定 (`config.json`)
 ```json
 {
   "embedding_model": "local",
   "chunk_size": 1000,
   "chunk_overlap": 200,
-  "auto_index": {
-    "enabled": true,
-    "auto_discover": true,
-    "max_projects": 3
-  }
+  "watch_directories": [],
+  "reindex_interval_seconds": 30,
+  "exclude_dirs": [".git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build", "data"]
 }
 ```
 
-### プロジェクト設定 (`.mcp-rag.json`) - 🚧 今後実装予定
-プロジェクトごとの個別設定機能（現在未実装）：
-```json
-{
-  "name": "My Project",
-  "index_settings": {
-    "chunk_size": 1500,
-    "additional_exclude": ["tests/", "*.generated.ts"]
-  }
-}
+### 環境変数での設定
+複数のディレクトリを監視する場合：
+```bash
+MCP_WATCH_DIR_1="/path/to/project1"
+MCP_WATCH_DIR_2="/path/to/project2"
+MCP_WATCH_DIR_3="/path/to/project3"
 ```
-*注: 現在はconfig.jsonのグローバル設定のみ有効です*
 
 ## 📋 対応ファイル形式
 
@@ -191,8 +183,9 @@ Markdown, JSON, YAML, XML, HTML, CSS など
 ## 🔧 トラブルシューティング
 
 ### インデックスが作成されない
-- プロジェクトマーカー（`.git`, `package.json`, `requirements.txt`）を確認
-- `watch_directory`コマンドで手動登録
+- 監視ディレクトリが設定されているか確認（環境変数またはconfig.json）
+- `index_directory`コマンドで手動インデックス
+- `watch_directory`コマンドで動的に追加
 
 ### 検索結果が表示されない
 - `get_index_status`でインデックス状態を確認
@@ -200,7 +193,11 @@ Markdown, JSON, YAML, XML, HTML, CSS など
 
 ### メモリ使用量が多い
 - `config.json`の`chunk_size`を調整
-- ローカル埋め込みモデルを軽量版に変更
+- `reindex_interval_seconds`を長く設定（デフォルト: 30秒）
+
+### fdコマンドが使えない
+- fdをインストール（推奨）または findコマンドで代替
+- Windowsの場合はWSLまたはGit Bashを使用
 
 ## 🤝 貢献
 
