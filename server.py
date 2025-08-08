@@ -553,17 +553,35 @@ async def main():
                 "text": f"Error: {str(e)}"
             }]
     
-    # Setup signal handlers for graceful shutdown
-    def signal_handler(signum, frame):
-        logger.info(f"Received signal {signum}, shutting down gracefully...")
-        shutdown_event.set()
-    
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
     # Run the server with stdio
     from mcp.server.models import InitializationOptions
     from mcp.types import ServerCapabilities
+    
+    server_task = None
+    shutdown_requested = False
+    
+    # Setup signal handlers for graceful shutdown
+    def signal_handler(signum, frame):
+        nonlocal shutdown_requested, server_task
+        if not shutdown_requested:
+            shutdown_requested = True
+            logger.info(f"Received signal {signum}, shutting down gracefully...")
+            shutdown_event.set()
+            # Cancel the server task if it exists
+            if server_task and not server_task.done():
+                server_task.cancel()
+            # Force exit after timeout if still hanging
+            import threading
+            def force_exit():
+                import time
+                time.sleep(3)
+                logger.warning("Shutdown timeout, forcing exit...")
+                import os
+                os._exit(0)
+            threading.Thread(target=force_exit, daemon=True).start()
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     
     try:
         async with stdio_server() as streams:
@@ -574,11 +592,27 @@ async def main():
                     tools={}
                 )
             )
+            # Store the server task so we can cancel it on shutdown
+            server_task = asyncio.current_task()
             await server.run(*streams, init_options)
+    except asyncio.CancelledError:
+        logger.info("Server task cancelled, shutting down...")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
     finally:
         logger.info("Server shutting down...")
         shutdown_event.set()  # Ensure background tasks stop
-        await asyncio.sleep(0.5)  # Give tasks time to finish
+        
+        # Cancel all remaining tasks except current
+        tasks = [t for t in asyncio.all_tasks() 
+                if t is not asyncio.current_task() and not t.done()]
+        for task in tasks:
+            task.cancel()
+        
+        # Wait for tasks to complete cancellation
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        
         logger.info("Server stopped.")
 
 
