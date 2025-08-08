@@ -10,6 +10,17 @@
 echo "🚀 MCP Local RAG セットアップを開始します..."
 echo ""
 
+# 引数を保存（相対パスを絶対パスに変換）
+ORIGINAL_ARGS=()
+for arg in "$@"; do
+    if [[ -d "$arg" ]]; then
+        # ディレクトリが存在する場合は絶対パスに変換
+        ORIGINAL_ARGS+=("$(cd "$arg" && pwd)")
+    else
+        ORIGINAL_ARGS+=("$arg")
+    fi
+done
+
 # スクリプトのディレクトリに移動
 cd "$(dirname "$0")"
 
@@ -33,10 +44,10 @@ model = SentenceTransformer('all-MiniLM-L6-v2')
 print('  ✅ モデルのダウンロード完了！')
 " 2>/dev/null || echo "  ⚠️  モデルのダウンロードをスキップ（既存のキャッシュを使用）"
 
-# 初回インデックス作成（引数をそのまま渡す）
+# 初回インデックス作成（保存した絶対パスを渡す）
 echo ""
 echo "🔍 初回インデックスを作成中..."
-uv run --no-project python scripts/setup_index.py "$@"
+uv run --no-project python scripts/setup_index.py "${ORIGINAL_ARGS[@]}"
 
 echo ""
 echo "セットアップ完了！"

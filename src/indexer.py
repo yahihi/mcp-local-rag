@@ -210,9 +210,13 @@ class FileIndexer:
         
         return chunks
     
-    async def index_file(self, file_path: str, force_reindex: bool = False) -> int:
+    async def index_file(self, file_path: str, force_reindex: bool = False, collection_name: Optional[str] = None) -> int:
         """Index a single file"""
         path = Path(file_path)
+        
+        # If collection_name is provided, switch to it
+        if collection_name:
+            self.vectordb.switch_collection(collection_name)
         
         # Check if file should be indexed
         if not self._should_index_file(str(path), force_reindex):
@@ -304,9 +308,20 @@ class FileIndexer:
             "errors": 0
         }
         
-        path = Path(directory)
+        path = Path(directory).resolve()
         if not path.exists():
             raise ValueError(f"Directory not found: {directory}")
+        
+        # Use project directory name as collection name
+        # Remove special characters and use underscore
+        import re
+        collection_name = re.sub(r'[^a-zA-Z0-9_-]', '_', path.name)
+        if not collection_name:
+            collection_name = "default"
+        
+        # Switch to project-specific collection
+        logger.info(f"Using collection '{collection_name}' for project: {path}")
+        self.vectordb.switch_collection(collection_name)
         
         # Determine extensions to process
         if extensions:

@@ -46,6 +46,9 @@ async def main():
     vectordb = VectorDB(config)
     search_engine = SearchEngine(vectordb, config)
     
+    # Track project collections
+    project_collections = {}
+    
     # Get watched directories from config and environment variables
     watched_dirs = set(config.get('watch_directories', []))
     
@@ -173,12 +176,19 @@ async def main():
                                 logger.info(f"Found {len(supported_files)} changed files in {directory}")
                                 any_files_processed = True
                                 
-                                # Index each changed file
+                                # Get collection name for this directory
+                                import re
+                                dir_path = Path(directory).resolve()
+                                collection_name = re.sub(r'[^a-zA-Z0-9_-]', '_', dir_path.name)
+                                if not collection_name:
+                                    collection_name = "default"
+                                
+                                # Index each changed file with the appropriate collection
                                 for file_path in supported_files:
                                     try:
-                                        chunks = await indexer.index_file(file_path, force_reindex=True)
+                                        chunks = await indexer.index_file(file_path, force_reindex=True, collection_name=collection_name)
                                         if chunks > 0:
-                                            logger.info(f"Re-indexed {file_path}: {chunks} chunks")
+                                            logger.info(f"Re-indexed {file_path}: {chunks} chunks in collection '{collection_name}'")
                                     except Exception as e:
                                         logger.error(f"Error indexing {file_path}: {e}")
                             else:
@@ -204,16 +214,36 @@ async def main():
                         
                         if deleted_files:
                             logger.info(f"Found {len(deleted_files)} deleted files to remove from index")
+                            
+                            # Group deleted files by their project directory
+                            import re
+                            files_by_collection = {}
                             for file_path in deleted_files:
-                                try:
-                                    # Remove from vector database
-                                    await vectordb.delete_by_file(file_path)
-                                    # Remove from metadata
-                                    del file_metadata[file_path]
-                                    logger.info(f"Removed deleted file from index: {file_path}")
-                                    any_files_processed = True
-                                except Exception as e:
-                                    logger.error(f"Error removing deleted file {file_path}: {e}")
+                                # Find which watched directory this file belongs to
+                                for watched_dir in watched_dirs:
+                                    if str(file_path).startswith(str(watched_dir)):
+                                        dir_path = Path(watched_dir).resolve()
+                                        collection_name = re.sub(r'[^a-zA-Z0-9_-]', '_', dir_path.name)
+                                        if not collection_name:
+                                            collection_name = "default"
+                                        if collection_name not in files_by_collection:
+                                            files_by_collection[collection_name] = []
+                                        files_by_collection[collection_name].append(file_path)
+                                        break
+                            
+                            # Delete from appropriate collections
+                            for collection_name, files in files_by_collection.items():
+                                vectordb.switch_collection(collection_name)
+                                for file_path in files:
+                                    try:
+                                        # Remove from vector database
+                                        await vectordb.delete_by_file(file_path)
+                                        # Remove from metadata
+                                        del file_metadata[file_path]
+                                        logger.info(f"Removed deleted file from collection '{collection_name}': {file_path}")
+                                        any_files_processed = True
+                                    except Exception as e:
+                                        logger.error(f"Error removing deleted file {file_path}: {e}")
                             
                             # Save updated metadata
                             if any_files_processed:
@@ -291,6 +321,10 @@ async def main():
                         "file_type": {
                             "type": "string",
                             "description": "Filter by file type (e.g., 'python', 'javascript')"
+                        },
+                        "collection": {
+                            "type": "string",
+                            "description": "Collection name (project) to search. If not specified, uses current directory's project"
                         }
                     },
                     "required": ["query"]
@@ -395,6 +429,26 @@ async def main():
                 }]
             
             elif name == "search_codebase":
+                # Get collection name from file path if provided
+                collection_name = arguments.get("collection")
+                
+                # If collection specified, switch to it
+                if collection_name:
+                    vectordb.switch_collection(collection_name)
+                else:
+                    # Try to detect from current working directory
+                    import os
+                    import re
+                    cwd = Path(os.getcwd()).resolve()
+                    # Check if cwd is in watched directories
+                    for watched_dir in watched_dirs:
+                        watched_path = Path(watched_dir).resolve()
+                        if cwd == watched_path or watched_path in cwd.parents:
+                            collection_name = re.sub(r'[^a-zA-Z0-9_-]', '_', watched_path.name)
+                            if collection_name:
+                                vectordb.switch_collection(collection_name)
+                            break
+                
                 results = await search_engine.search(
                     query=arguments["query"],
                     limit=arguments.get("limit", 10),
@@ -521,6 +575,28 @@ async def main():
                     for dir in watched_dirs:
                         status_text += f"  - {dir}\n"
                 
+                # Get available collections
+                try:
+                    import re
+                    collections = vectordb.client.list_collections()
+                    if collections:
+                        status_text += f"\nAvailable collections ({len(collections)}):\n"
+                        for collection in collections:
+                            # Try to match collection name to watched directory
+                            matched_dir = None
+                            for watched_dir in watched_dirs:
+                                watched_path = Path(watched_dir).resolve()
+                                collection_pattern = re.sub(r'[^a-zA-Z0-9_-]', '_', watched_path.name)
+                                if collection.name == collection_pattern:
+                                    matched_dir = watched_dir
+                                    break
+                            
+                            if matched_dir:
+                                status_text += f"  - {collection.name} (from {matched_dir})\n"
+                            else:
+                                status_text += f"  - {collection.name}\n"
+                except Exception as e:
+                    logger.debug(f"Could not list collections: {e}")
                 
                 # Get index statistics from file_metadata.json
                 try:
