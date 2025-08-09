@@ -57,6 +57,8 @@ class EmbeddingGenerator:
             from sentence_transformers import SentenceTransformer
             
             model_name = self.config.get('local_embedding_model', 'all-MiniLM-L6-v2')
+            # Allow tuning batch size via config
+            self.batch_size = int(self.config.get('embedding_batch_size', 32))
             
             # Check cache first
             if model_name not in _model_cache:
@@ -98,7 +100,11 @@ class EmbeddingGenerator:
     async def _generate_local(self, text: str) -> List[float]:
         """Generate embedding using local model"""
         # SentenceTransformer.encode() is synchronous
-        embedding = self.local_model.encode(text, convert_to_numpy=True)
+        embedding = self.local_model.encode(
+            text,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+        )
         return embedding.tolist()
     
     async def batch_generate(self, texts: List[str]) -> List[List[float]]:
@@ -123,7 +129,12 @@ class EmbeddingGenerator:
     
     async def _batch_generate_local(self, texts: List[str]) -> List[List[float]]:
         """Batch generate embeddings using local model"""
-        embeddings = self.local_model.encode(texts, convert_to_numpy=True)
+        embeddings = self.local_model.encode(
+            texts,
+            convert_to_numpy=True,
+            batch_size=getattr(self, 'batch_size', 32),
+            show_progress_bar=False,
+        )
         return embeddings.tolist()
     
     def get_dimension(self) -> int:

@@ -46,7 +46,7 @@ class SearchEngine:
             results = await self.vectordb.search(
                 query_embedding=query_embedding,
                 limit=limit or self.default_limit,
-                filter_dict=filter_dict if filter_dict else None
+                filter=filter_dict if filter_dict else None
             )
             
             # Filter by file path pattern if specified
@@ -59,25 +59,22 @@ class SearchEngine:
             # Format results
             formatted_results = []
             for result in results:
-                # Calculate similarity score from cosine distance
-                # Cosine distance ranges from 0 (identical) to 2 (opposite)
-                # Convert to similarity score from 0 to 1
-                distance = result['distance']
-                score = max(0.0, 1.0 - (distance / 2.0))
+                # Get score (already normalized 0-1 from vectordb)
+                score = result.get('score', 0)
                 
                 # Skip results below threshold
                 if score < self.similarity_threshold:
                     continue
                 
-                metadata = result['metadata']
+                metadata = result.get('metadata', {})
                 formatted_results.append({
                     'file_path': metadata.get('file_path', 'unknown'),
                     'start_line': metadata.get('start_line', 0),
                     'end_line': metadata.get('end_line', 0),
                     'language': metadata.get('language', 'unknown'),
                     'score': score,
-                    'preview': self._create_preview(result['document']),
-                    'chunk_id': result['id']
+                    'preview': self._create_preview(result.get('content', '')),
+                    'chunk_id': result.get('id', '')
                 })
             
             return formatted_results
@@ -85,6 +82,51 @@ class SearchEngine:
         except Exception as e:
             logger.error(f"Search error: {e}")
             return []
+    
+    async def get_file_context(
+        self,
+        file_path: str,
+        line_number: int = 0,
+        context_lines: int = 50
+    ) -> Dict[str, Any]:
+        """Get context around a specific line in a file"""
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+            
+            total_lines = len(lines)
+            
+            # Calculate start and end lines
+            if line_number <= 0:
+                # If no line number specified, return beginning of file
+                start_line = 0
+                end_line = min(context_lines, total_lines)
+            else:
+                # Center context around the specified line
+                start_line = max(0, line_number - context_lines)
+                end_line = min(line_number + context_lines, total_lines)
+            
+            # Extract content
+            context_content = ''.join(lines[start_line:end_line])
+            
+            return {
+                'file_path': file_path,
+                'content': context_content,
+                'start_line': start_line + 1,  # Convert to 1-based
+                'end_line': end_line,
+                'total_lines': total_lines
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting file context: {e}")
+            return {
+                'file_path': file_path,
+                'content': '',
+                'start_line': 0,
+                'end_line': 0,
+                'total_lines': 0,
+                'error': str(e)
+            }
     
     async def find_similar_files(
         self,
@@ -119,7 +161,7 @@ class SearchEngine:
             for result in results:
                 file_path = result['metadata'].get('file_path')
                 if file_path and file_path != str(path):
-                    score = 1.0 - result['distance'] if result['distance'] < 1.0 else 0.0
+                    score = result.get('score', 0.0)
                     file_scores[file_path].append(score)
             
             # Calculate average score per file
@@ -166,18 +208,19 @@ class SearchEngine:
             results = await self.vectordb.search(
                 query_embedding=first_chunk,
                 limit=limit + len(file_results['ids']),  # Extra to filter out same file
-                filter_dict=None
+                filter=None
             )
             
             # Filter out chunks from the same file
             related = []
             for result in results:
-                if result['metadata'].get('file_path') != file_path:
+                metadata = result.get('metadata', {})
+                if metadata.get('file_path') != file_path:
                     related.append({
-                        'file_path': result['metadata'].get('file_path'),
-                        'start_line': result['metadata'].get('start_line'),
-                        'end_line': result['metadata'].get('end_line'),
-                        'preview': self._create_preview(result['document'])
+                        'file_path': metadata.get('file_path'),
+                        'start_line': metadata.get('start_line'),
+                        'end_line': metadata.get('end_line'),
+                        'preview': self._create_preview(result.get('content', ''))
                     })
                     
                     if len(related) >= limit:

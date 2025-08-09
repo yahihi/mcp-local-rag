@@ -3,6 +3,7 @@ File Indexer for RAG System
 """
 
 import hashlib
+import fnmatch
 import json
 import logging
 import os
@@ -111,6 +112,7 @@ class FileIndexer:
         self.chunk_overlap = config.get('chunk_overlap', 200)
         self.index_path = Path(config.get('index_path', './data/index'))
         self.index_path.mkdir(parents=True, exist_ok=True)
+        self.progress_interval = int(config.get('progress_interval', 200))
         
         # Initialize components
         self.vectordb = VectorDB(config)
@@ -123,6 +125,25 @@ class FileIndexer:
         
         # File watcher
         self.observer = None
+
+        # Exclude directory patterns from config (fallback to sensible defaults)
+        default_excludes = {
+            '.git', 'node_modules', '__pycache__', '.venv', 'venv', 'env', '.env',
+            'dist', 'build', '.next', 'target'
+        }
+        self.exclude_dir_patterns = set(config.get('exclude_dirs', list(default_excludes)))
+
+    def _is_excluded(self, path: Path) -> bool:
+        """Return True if any path component matches an exclude pattern."""
+        for part in path.parts:
+            for pat in self.exclude_dir_patterns:
+                try:
+                    if fnmatch.fnmatch(part, pat):
+                        return True
+                except Exception:
+                    # In case of an invalid pattern, skip matching
+                    continue
+        return False
     
     def _load_file_metadata(self) -> Dict:
         """Load file metadata cache"""
@@ -220,7 +241,7 @@ class FileIndexer:
         
         # Check if file should be indexed
         if not self._should_index_file(str(path), force_reindex):
-            logger.info(f"Skipping unchanged file: {path}")
+            logger.debug(f"Skipping unchanged file: {path}")
             return 0
         
         # Get file extension and language
@@ -238,18 +259,20 @@ class FileIndexer:
             
             # Create chunks
             chunks = self._chunk_text(content, str(path))
-            
-            # Generate embeddings for each chunk
+
+            # Batch-generate embeddings for all chunks of this file
+            texts = [chunk.content for chunk in chunks]
+            embeddings_out: List[List[float]] = []
+            if texts:
+                embeddings_out = await self.embeddings.batch_generate(texts)
+
+            # Prepare for storage
             documents = []
             embeddings_list = []
             metadatas = []
             ids = []
-            
-            for chunk in chunks:
-                # Generate embedding
-                embedding = await self.embeddings.generate(chunk.content)
-                
-                # Prepare for storage
+
+            for chunk, embedding in zip(chunks, embeddings_out):
                 documents.append(chunk.content)
                 embeddings_list.append(embedding)
                 ids.append(chunk.id)
@@ -271,12 +294,16 @@ class FileIndexer:
                 await self.vectordb.delete_by_file(str(path))
             
             # Store in vector database
-            await self.vectordb.add_documents(
-                documents=documents,
-                embeddings=embeddings_list,
-                metadatas=metadatas,
-                ids=ids
-            )
+            docs_to_add = []
+            for i in range(len(documents)):
+                docs_to_add.append({
+                    'id': ids[i],
+                    'content': documents[i],
+                    'embedding': embeddings_list[i],
+                    'metadata': metadatas[i]
+                })
+            
+            await self.vectordb.add_documents(docs_to_add)
             
             # Update file metadata
             self.file_metadata[str(path)] = {
@@ -334,19 +361,14 @@ class FileIndexer:
         for ext in valid_extensions:
             files_to_index.extend(path.rglob(f"*{ext}"))
         
-        # Exclude common directories
-        exclude_dirs = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', 
-                       'env', '.env', 'dist', 'build', '.next', 'target'}
-        
-        files_to_index = [
-            f for f in files_to_index
-            if not any(excluded in f.parts for excluded in exclude_dirs)
-        ]
+        # Exclude directories based on configured patterns
+        files_to_index = [f for f in files_to_index if not self._is_excluded(f)]
         
         logger.info(f"Found {len(files_to_index)} files to process")
         
         # Index each file
-        for file_path in files_to_index:
+        total = len(files_to_index)
+        for i, file_path in enumerate(files_to_index, start=1):
             try:
                 chunks = await self.index_file(str(file_path), force_reindex)
                 if chunks > 0:
@@ -357,6 +379,13 @@ class FileIndexer:
             except Exception as e:
                 logger.error(f"Error processing {file_path}: {e}")
                 stats["errors"] += 1
+            # Heartbeat progress
+            if self.progress_interval and i % self.progress_interval == 0:
+                logger.info(
+                    f"Progress: {i}/{total} files, processed={stats['files_processed']}, "
+                    f"skipped={stats['files_skipped']}, errors={stats['errors']}, "
+                    f"chunks={stats['chunks_created']}"
+                )
         
         logger.info(f"Indexing complete: {stats}")
         return stats

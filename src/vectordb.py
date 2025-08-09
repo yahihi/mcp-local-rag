@@ -82,48 +82,29 @@ class VectorDB:
     
     async def add_documents(
         self,
-        documents: List[str],
-        embeddings: List[List[float]],
-        metadatas: List[Dict],
-        ids: List[str]
+        documents: List[Dict[str, Any]],
+        collection_name: Optional[str] = None
     ) -> None:
         """Add documents with embeddings to the database"""
         try:
-            # Check for existing documents
-            existing_ids = set(self.collection.get(ids=ids)['ids'])
+            # Get the target collection
+            collection = self.get_or_create_collection(collection_name) if collection_name else self.collection
             
-            # Filter out existing documents
-            new_docs = []
-            new_embeddings = []
-            new_metadatas = []
-            new_ids = []
+            # Extract data from documents
+            ids = [doc['id'] for doc in documents]
+            contents = [doc['content'] for doc in documents]
+            embeddings = [doc['embedding'] for doc in documents]
+            metadatas = [doc.get('metadata', {}) for doc in documents]
             
-            for i, doc_id in enumerate(ids):
-                if doc_id not in existing_ids:
-                    new_docs.append(documents[i])
-                    new_embeddings.append(embeddings[i])
-                    new_metadatas.append(metadatas[i])
-                    new_ids.append(doc_id)
-                else:
-                    # Update existing document
-                    self.collection.update(
-                        ids=[doc_id],
-                        documents=[documents[i]],
-                        embeddings=[embeddings[i]],
-                        metadatas=[metadatas[i]]
-                    )
+            # Add to collection
+            collection.add(
+                ids=ids,
+                documents=contents,
+                embeddings=embeddings,
+                metadatas=metadatas
+            )
             
-            # Add new documents
-            if new_docs:
-                self.collection.add(
-                    documents=new_docs,
-                    embeddings=new_embeddings,
-                    metadatas=new_metadatas,
-                    ids=new_ids
-                )
-                logger.info(f"Added {len(new_docs)} new documents")
-            
-            logger.info(f"Updated {len(existing_ids)} existing documents")
+            logger.info(f"Added {len(documents)} documents to collection")
             
         except Exception as e:
             logger.error(f"Error adding documents: {e}")
@@ -133,15 +114,19 @@ class VectorDB:
         self,
         query_embedding: List[float],
         limit: int = 10,
-        filter_dict: Optional[Dict] = None
+        filter: Optional[Dict] = None,
+        collection_name: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Search for similar documents"""
         try:
+            # Get the target collection
+            collection = self.get_or_create_collection(collection_name) if collection_name else self.collection
+            
             # Perform search
-            results = self.collection.query(
+            results = collection.query(
                 query_embeddings=[query_embedding],
                 n_results=limit,
-                where=filter_dict
+                where=filter
             )
             
             # Format results
@@ -151,9 +136,9 @@ class VectorDB:
                 for i in range(len(results['ids'][0])):
                     formatted_results.append({
                         'id': results['ids'][0][i],
-                        'document': results['documents'][0][i] if results['documents'] else None,
+                        'content': results['documents'][0][i] if results['documents'] else '',
                         'metadata': results['metadatas'][0][i] if results['metadatas'] else {},
-                        'distance': results['distances'][0][i] if results['distances'] else 0
+                        'score': 1 - results['distances'][0][i] if results['distances'] else 0
                     })
             
             return formatted_results
@@ -189,22 +174,61 @@ class VectorDB:
             logger.error(f"Error deleting documents: {e}")
             return False
     
-    async def delete_by_file(self, file_path: str) -> int:
+    async def delete_by_file(self, file_path: str, collection_name: Optional[str] = None) -> int:
         """Delete all chunks from a specific file"""
         try:
-            # Get all documents from this file
-            results = self.collection.get(
+            # Get the target collection
+            collection = self.get_or_create_collection(collection_name) if collection_name else self.collection
+            
+            # Delete by metadata filter
+            collection.delete(
                 where={"file_path": file_path}
             )
-            
-            if results['ids']:
-                await self.delete_documents(results['ids'])
-                return len(results['ids'])
-            return 0
+            logger.info(f"Deleted chunks from {file_path}")
+            return 0  # ChromaDB doesn't return delete count
             
         except Exception as e:
             logger.error(f"Error deleting file chunks: {e}")
             return 0
+    
+    async def get_all_files(self, collection_name: Optional[str] = None) -> List[str]:
+        """Get all unique file paths in the collection"""
+        try:
+            # Get the target collection
+            collection = self.get_or_create_collection(collection_name) if collection_name else self.collection
+            
+            # Get all documents' metadata
+            results = collection.get()
+            
+            # Extract unique file paths
+            file_paths = set()
+            if results['metadatas']:
+                for metadata in results['metadatas']:
+                    if metadata and 'file_path' in metadata:
+                        file_paths.add(metadata['file_path'])
+            
+            return list(file_paths)
+            
+        except Exception as e:
+            logger.error(f"Error getting all files: {e}")
+            return []
+    
+    async def clear(self, collection_name: Optional[str] = None) -> None:
+        """Clear all documents from the collection"""
+        try:
+            collection_name = collection_name or self.collection_name
+            
+            # Delete the collection
+            self.client.delete_collection(name=collection_name)
+            logger.info(f"Deleted collection: {collection_name}")
+            
+            # Recreate it
+            self._init_collection()
+            logger.info(f"Recreated collection: {collection_name}")
+            
+        except Exception as e:
+            logger.error(f"Error clearing collection: {e}")
+            raise
     
     async def get_collection_stats(self) -> Dict[str, Any]:
         """Get statistics about the collection"""
