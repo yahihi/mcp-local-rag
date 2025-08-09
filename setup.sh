@@ -34,9 +34,44 @@ done
 # スクリプトのディレクトリに移動
 cd "$(dirname "$0")"
 
+# uvコマンドの確認
+echo "== STEP: uvコマンドの確認 =="
+if ! command -v uv &> /dev/null; then
+    echo "⚠️  uvコマンドが見つかりません"
+    echo ""
+    echo "uvのインストール方法:"
+    echo "  curl -LsSf https://astral.sh/uv/install.sh | sh"
+    echo ""
+    echo "詳細: https://github.com/astral-sh/uv"
+    exit 1
+fi
+echo "✅ uvコマンドが利用可能です"
+
 # 依存関係の確認
+echo ""
 echo "== STEP: 依存関係の確認 =="
 echo "📦 依存関係を確認中..."
+
+# .venv環境の確認
+if [ ! -d ".venv" ]; then
+    echo "⚠️  .venv環境が存在しません"
+    read -r -p "uv venv で仮想環境を作成しますか? [y/N]: " VENV_ANSWER
+    VENV_ANS_LC=$(printf '%s' "$VENV_ANSWER" | tr '[:upper:]' '[:lower:]')
+    case "$VENV_ANS_LC" in
+        y|yes)
+            echo "実行中: uv venv"
+            uv venv
+            echo "✅ .venv環境を作成しました"
+            ;;
+        *)
+            echo "⏹ 仮想環境の作成をスキップしました"
+            echo "   手動で 'uv venv' を実行してから再度setup.shを実行してください"
+            exit 1
+            ;;
+    esac
+fi
+
+# 依存関係のインストール確認
 if ! uv pip list | grep -q "chromadb" > /dev/null 2>&1; then
     echo "⚠️  依存関係がインストールされていません"
     echo "実行中: uv pip install -r requirements.txt"
