@@ -187,18 +187,79 @@ MCP_WATCH_DIR_3="/path/to/project3"
 特定のファイルやディレクトリをインデックスから除外できます：
 
 ```bash
+# コメント行（#で始まる）
+# パターンの例:
+
+# 特定の拡張子を除外
+*.log
+*.tmp
+*.cache
+
+# 特定のディレクトリを除外
+node_modules/
+.venv/
+__pycache__/
+dist/
+build/
+
+# ワイルドカードパターン
+test_*.py
+*_test.go
+*.test.js
+
+# 複数階層のワイルドカード
+**/logs/
+**/temp/
+**/*.bak
+
+# 特定のファイル名
+.DS_Store
+Thumbs.db
+.env
+.env.local
+
 # 大きなデータファイル
 *.json
 *.csv
 *.db
+*.sqlite
+*.h5
 
-# バックテスト結果
+# バイナリファイル
+*.exe
+*.dll
+*.so
+*.dylib
+
+# メディアファイル
+*.mp4
+*.avi
+*.mov
+*.jpg
+*.jpeg
+*.png
+*.gif
+
+# アーカイブファイル
+*.zip
+*.tar
+*.gz
+*.rar
+*.7z
+
+# IDE/エディタ設定
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# プロジェクト固有の例
 backtest_results/
 results/*.json
-
-# ログファイル
-*.log
-logs/
+migrations/
+data/raw/
+data/processed/
 ```
 
 ## 📋 対応ファイル形式
