@@ -25,6 +25,32 @@ class SearchEngine:
         self.default_limit = config.get('search_limit', 10)
         self.similarity_threshold = config.get('similarity_threshold', 0.5)
     
+    async def search_multiple(
+        self,
+        queries: List[str],
+        limit: Optional[int] = None,
+        file_type: Optional[str] = None,
+        file_path_pattern: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Search with multiple queries and aggregate results"""
+        all_results = {}
+        
+        for query in queries:
+            results = await self.search(query, limit, file_type, file_path_pattern)
+            # Aggregate by file path
+            for result in results:
+                file_path = result['file_path']
+                if file_path not in all_results:
+                    all_results[file_path] = result
+                else:
+                    # Keep the best score
+                    if result['score'] < all_results[file_path]['score']:
+                        all_results[file_path] = result
+        
+        # Sort by score and return
+        sorted_results = sorted(all_results.values(), key=lambda x: x['score'])
+        return sorted_results[:limit] if limit else sorted_results
+    
     async def search(
         self,
         query: str,
@@ -60,10 +86,12 @@ class SearchEngine:
             formatted_results = []
             for result in results:
                 # Get score (already normalized 0-1 from vectordb)
-                score = result.get('score', 0)
+                # ChromaDBは距離を返すので、スコアが負の場合は絶対値を取る
+                score = abs(result.get('score', 0))
                 
-                # Skip results below threshold
-                if score < self.similarity_threshold:
+                # Skip results below threshold (距離なので小さいほど良い)
+                # 閾値を超える場合はスキップ（距離が大きすぎる）
+                if score > (1 - self.similarity_threshold):
                     continue
                 
                 metadata = result.get('metadata', {})
