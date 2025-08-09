@@ -14,6 +14,7 @@ Examples:
 
 import asyncio
 import sys
+import os
 from pathlib import Path
 
 # Add src to path
@@ -23,7 +24,9 @@ from indexer import FileIndexer
 from utils import load_config
 import logging
 
-logging.basicConfig(level=logging.INFO)
+level_name = os.getenv("LOGLEVEL", "INFO").upper()
+level = getattr(logging, level_name, logging.INFO)
+logging.basicConfig(level=level)
 logger = logging.getLogger(__name__)
 
 
@@ -39,13 +42,19 @@ async def main():
         watch_dirs = sys.argv[1:]
         print(f"📁 Using directories from command line arguments")
     else:
-        # Fall back to config.json
-        watch_dirs = config.get('auto_index', {}).get('watch_directories', [])
-        print(f"📁 Using directories from config.json")
+        # Fall back to config.json (prefer top-level 'watch_directories')
+        watch_dirs = (
+            config.get('watch_directories')
+            or config.get('auto_index', {}).get('watch_directories', [])
+        )
+        if config.get('watch_directories'):
+            print(f"📁 Using directories from config.json (watch_directories)")
+        else:
+            print(f"📁 Using directories from config.json (auto_index.watch_directories)")
     
     if not watch_dirs:
         print("❌ No directories configured in config.json")
-        print("Please edit config.json and add directories to auto_index.watch_directories")
+        print("Please add directories to 'watch_directories' or 'auto_index.watch_directories'")
         return 1
     
     print(f"📁 Found {len(watch_dirs)} directories to index:")
