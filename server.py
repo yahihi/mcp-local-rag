@@ -289,7 +289,7 @@ async def main():
             ),
             Tool(
                 name="search_codebase",
-                description="Search the indexed codebase using semantic search",
+                description="Search the indexed codebase using semantic search. Supports multiple languages including Japanese",
                 inputSchema={
                     "type": "object",
                     "properties": {

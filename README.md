@@ -23,8 +23,10 @@
 
 ### 🔍 高度な検索機能
 - セマンティック検索で意味的に関連するコードを発見
+- 複数クエリーのアグリゲーション検索に対応
 - 類似ファイル検索で関連コードを探索
 - 特定行周辺のコンテキスト抽出
+- 日本語クエリを完全サポート
 
 ## 📦 インストール
 
@@ -158,11 +160,19 @@ data/index/
   "embedding_model": "local",
   "chunk_size": 1000,
   "chunk_overlap": 200,
+  "max_file_size": 5242880,
+  "embedding_batch_size": 32,
+  "similarity_threshold": 0.1,
   "watch_directories": [],
   "reindex_interval_seconds": 30,
   "exclude_dirs": [".git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build", "data"]
 }
 ```
+
+### パフォーマンス設定
+- `max_file_size`: 処理する最大ファイルサイズ（デフォルト: 5MB）
+- `embedding_batch_size`: 埋め込み生成のバッチサイズ（デフォルト: 32）
+- `similarity_threshold`: 検索結果の類似度閾値（デフォルト: 0.1）
 
 ### 環境変数での設定
 複数のディレクトリを監視する場合：
@@ -170,6 +180,25 @@ data/index/
 MCP_WATCH_DIR_1="/path/to/project1"
 MCP_WATCH_DIR_2="/path/to/project2"
 MCP_WATCH_DIR_3="/path/to/project3"
+```
+
+### 除外ファイル設定 (.mcp-local-rag-ignore)
+プロジェクトのルートディレクトリに`.mcp-local-rag-ignore`ファイルを作成することで、
+特定のファイルやディレクトリをインデックスから除外できます：
+
+```bash
+# 大きなデータファイル
+*.json
+*.csv
+*.db
+
+# バックテスト結果
+backtest_results/
+results/*.json
+
+# ログファイル
+*.log
+logs/
 ```
 
 ## 📋 対応ファイル形式
@@ -190,10 +219,17 @@ Markdown, JSON, YAML, XML, HTML, CSS など
 ### 検索結果が表示されない
 - `get_index_status`でインデックス状態を確認
 - 必要に応じて`index_directory`で再インデックス
+- `similarity_threshold`を調整（小さくすると緩い検索）
 
 ### メモリ使用量が多い
 - `config.json`の`chunk_size`を調整
 - `reindex_interval_seconds`を長く設定（デフォルト: 30秒）
+- `max_file_size`を小さく設定して大きなファイルを除外
+
+### 処理が遅い
+- `.mcp-local-rag-ignore`ファイルで大きなファイルを除外
+- `LOGLEVEL=DEBUG`で詳細なタイミング情報を確認
+- `test_performance.sh`スクリプトでボトルネックを特定
 
 ### fdコマンドが使えない
 - fdをインストール（推奨）または findコマンドで代替
