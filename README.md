@@ -183,8 +183,20 @@ MCP_WATCH_DIR_3="/path/to/project3"
 ```
 
 ### 除外ファイル設定 (.mcp-local-rag-ignore)
+
 プロジェクトのルートディレクトリに`.mcp-local-rag-ignore`ファイルを作成することで、
-特定のファイルやディレクトリをインデックスから除外できます：
+特定のファイルやディレクトリをインデックスから除外できます。
+
+サンプルファイルが用意されています：
+```bash
+# サンプルファイルをコピーして使用
+cp .mcp-local-rag-ignore.example .mcp-local-rag-ignore
+
+# 必要に応じて編集
+vi .mcp-local-rag-ignore
+```
+
+#### 除外パターンの例：
 
 ```bash
 # コメント行（#で始まる）

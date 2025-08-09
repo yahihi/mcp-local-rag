@@ -1,0 +1,271 @@
+# MCP Local RAG 除外パターン設定ファイル
+# このファイルをプロジェクトルートに .mcp-local-rag-ignore としてコピーして使用してください
+# cp .mcp-local-rag-ignore.example .mcp-local-rag-ignore
+
+# ===========================
+# 一般的な除外パターン
+# ===========================
+
+# --- バージョン管理 ---
+.git/
+.svn/
+.hg/
+.bzr/
+
+# --- 仮想環境・依存関係 ---
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.*
+node_modules/
+bower_components/
+vendor/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# --- ビルド成果物 ---
+build/
+dist/
+target/
+out/
+bin/
+obj/
+*.egg-info/
+*.egg
+.eggs/
+
+# --- キャッシュ・一時ファイル ---
+*.log
+*.tmp
+*.temp
+*.cache
+*.bak
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- IDE/エディタ設定 ---
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+.project
+.classpath
+.settings/
+*.iml
+.eclipse/
+
+# --- テスト・カバレッジ ---
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.pytest_cache/
+.phpunit.result.cache
+coverage/
+*.cover
+
+# --- データファイル ---
+*.db
+*.sqlite
+*.sqlite3
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.npy
+*.npz
+*.parquet
+*.feather
+
+# --- 大容量ファイル ---
+*.csv
+*.json
+*.xml
+*.sql
+*.dump
+
+# --- バイナリファイル ---
+*.exe
+*.dll
+*.so
+*.dylib
+*.lib
+*.a
+*.o
+*.ko
+*.elf
+*.class
+*.jar
+*.war
+*.ear
+
+# --- メディアファイル ---
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.svg
+*.ico
+*.mp3
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.flv
+*.webm
+*.mkv
+*.wav
+*.flac
+
+# --- アーカイブファイル ---
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.tar.bz2
+*.tbz2
+*.tar.xz
+*.txz
+*.rar
+*.7z
+*.dmg
+*.iso
+
+# --- ドキュメント（必要に応じてコメントアウト） ---
+# *.pdf
+# *.doc
+# *.docx
+# *.xls
+# *.xlsx
+# *.ppt
+# *.pptx
+
+# ===========================
+# 言語・フレームワーク固有
+# ===========================
+
+# --- Python ---
+*.whl
+pip-log.txt
+pip-delete-this-directory.txt
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# --- JavaScript/TypeScript ---
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.npm
+.yarn/
+.pnp.*
+.next/
+.nuxt/
+.cache/
+.parcel-cache/
+
+# --- Java ---
+*.class
+.gradle/
+gradle-app.setting
+!gradle-wrapper.jar
+.gradletasknamecache
+
+# --- Ruby ---
+*.gem
+*.rbc
+.bundle/
+.config
+coverage/
+InstalledFiles
+lib/bundler/man/
+pkg/
+rdoc/
+spec/reports/
+
+# --- Go ---
+*.exe
+*.test
+*.out
+go.sum
+
+# --- Rust ---
+Cargo.lock
+**/*.rs.bk
+
+# --- .NET ---
+*.user
+*.userosscache
+*.sln.docstates
+.vs/
+*.userprefs
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]in/
+[Oo]bj/
+
+# ===========================
+# プロジェクト固有の例
+# ===========================
+
+# --- 機械学習プロジェクト ---
+# models/
+# checkpoints/
+# runs/
+# tensorboard/
+# wandb/
+# mlruns/
+
+# --- Webアプリケーション ---
+# static/dist/
+# static/build/
+# public/build/
+# uploads/
+# media/
+
+# --- データ分析 ---
+# data/raw/
+# data/processed/
+# data/interim/
+# notebooks/.ipynb_checkpoints/
+
+# --- バックテスト/シミュレーション ---
+# results/
+# backtest_results/
+# simulation_output/
+# reports/*.html
+
+# --- ログ・監視 ---
+# logs/
+# metrics/
+# monitoring/
+
+# --- 機密情報 ---
+# secrets/
+# credentials/
+# *.key
+# *.pem
+# *.crt
+# *.p12
+# .env.production
+# config/production.yml
+
+# ===========================
+# カスタム設定
+# ===========================
+# プロジェクト固有の除外パターンをここに追加してください
