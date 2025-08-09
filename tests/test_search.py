@@ -4,9 +4,15 @@ Test search functionality after periodic indexing
 """
 
 import asyncio
-from src.search import SearchEngine
-from src.vectordb import VectorDB
-from src.utils import load_config
+import sys
+from pathlib import Path
+
+# Add src to path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+
+from search import SearchEngine
+from vectordb import VectorDB
+from utils import load_config
 
 async def test_search():
     """Test searching for specific markers"""

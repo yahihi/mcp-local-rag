@@ -129,12 +129,22 @@ class EmbeddingGenerator:
     
     async def _batch_generate_local(self, texts: List[str]) -> List[List[float]]:
         """Batch generate embeddings using local model"""
+        import time
+        start = time.perf_counter()
+        
+        batch_size = getattr(self, 'batch_size', 32)
+        logger.debug(f"Encoding {len(texts)} texts with batch_size={batch_size}")
+        
         embeddings = self.local_model.encode(
             texts,
             convert_to_numpy=True,
-            batch_size=getattr(self, 'batch_size', 32),
+            batch_size=batch_size,
             show_progress_bar=False,
         )
+        
+        elapsed = (time.perf_counter() - start) * 1000
+        logger.debug(f"Encoded {len(texts)} texts in {elapsed:.1f}ms ({elapsed/len(texts):.1f}ms per text)")
+        
         return embeddings.tolist()
     
     def get_dimension(self) -> int:

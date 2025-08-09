@@ -116,6 +116,8 @@ class FileIndexer:
         self.index_path = Path(config.get('index_path', './data/index'))
         self.index_path.mkdir(parents=True, exist_ok=True)
         self.progress_interval = int(config.get('progress_interval', 200))
+        # Maximum file size to process (default 10MB)
+        self.max_file_size = config.get('max_file_size', 10 * 1024 * 1024)
         
         # Initialize components
         self.vectordb = VectorDB(config)
@@ -242,6 +244,9 @@ class FileIndexer:
     
     async def index_file(self, file_path: str, force_reindex: bool = False, collection_name: Optional[str] = None) -> int:
         """Index a single file"""
+        import time
+        file_start = time.perf_counter()
+        
         path = Path(file_path)
         
         # If collection_name is provided, switch to it
@@ -249,8 +254,18 @@ class FileIndexer:
             self.vectordb.switch_collection(collection_name)
         
         # Check if file should be indexed
-        if not self._should_index_file(str(path), force_reindex):
+        hash_start = time.perf_counter()
+        should_index = self._should_index_file(str(path), force_reindex)
+        logger.debug(f"Hash check for {path.name}: {(time.perf_counter() - hash_start)*1000:.1f}ms")
+        
+        if not should_index:
             logger.debug(f"Skipping unchanged file: {path}")
+            return 0
+        
+        # Check file size
+        file_size = path.stat().st_size
+        if file_size > self.max_file_size:
+            logger.warning(f"Skipping large file {path.name}: {file_size / 1024 / 1024:.1f}MB > {self.max_file_size / 1024 / 1024:.1f}MB limit")
             return 0
         
         # Get file extension and language
@@ -264,17 +279,23 @@ class FileIndexer:
         
         try:
             # Read file content
+            read_start = time.perf_counter()
             with open(path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
+            logger.debug(f"Read {path.name} ({len(content)} chars): {(time.perf_counter() - read_start)*1000:.1f}ms")
             
             # Create chunks
+            chunk_start = time.perf_counter()
             chunks = self._chunk_text(content, str(path))
+            logger.debug(f"Chunked {path.name} into {len(chunks)} chunks: {(time.perf_counter() - chunk_start)*1000:.1f}ms")
 
             # Batch-generate embeddings for all chunks of this file
             texts = [chunk.content for chunk in chunks]
             embeddings_out: List[List[float]] = []
             if texts:
+                embed_start = time.perf_counter()
                 embeddings_out = await self.embeddings.batch_generate(texts)
+                logger.debug(f"Generated {len(embeddings_out)} embeddings for {path.name}: {(time.perf_counter() - embed_start)*1000:.1f}ms")
 
             # Prepare for storage
             documents = []
@@ -313,7 +334,9 @@ class FileIndexer:
                     'metadata': metadatas[i]
                 })
             
+            db_start = time.perf_counter()
             await self.vectordb.add_documents(docs_to_add)
+            logger.debug(f"Stored {len(docs_to_add)} chunks in DB for {path.name}: {(time.perf_counter() - db_start)*1000:.1f}ms")
             
             # Update file metadata
             self.file_metadata[str(path)] = {
@@ -324,7 +347,10 @@ class FileIndexer:
             }
             self._save_file_metadata()
             
-            logger.info(f"Indexed {path}: {len(chunks)} chunks")
+            total_time = (time.perf_counter() - file_start) * 1000
+            logger.info(f"Indexed {path}: {len(chunks)} chunks in {total_time:.1f}ms")
+            if total_time > 1000:  # 1秒以上かかったファイルを警告
+                logger.warning(f"Slow file: {path.name} took {total_time:.1f}ms")
             return len(chunks)
             
         except Exception as e:
@@ -380,6 +406,8 @@ class FileIndexer:
         logger.info(f"Found {len(files_to_index)} files to process")
         
         # Index each file
+        import time
+        batch_start = time.perf_counter()
         total = len(files_to_index)
         for i, file_path in enumerate(files_to_index, start=1):
             try:
@@ -394,8 +422,11 @@ class FileIndexer:
                 stats["errors"] += 1
             # Heartbeat progress
             if self.progress_interval and i % self.progress_interval == 0:
+                elapsed = (time.perf_counter() - batch_start)
+                rate = i / elapsed if elapsed > 0 else 0
                 logger.info(
-                    f"Progress: {i}/{total} files, processed={stats['files_processed']}, "
+                    f"Progress: {i}/{total} files ({rate:.1f} files/sec), "
+                    f"processed={stats['files_processed']}, "
                     f"skipped={stats['files_skipped']}, errors={stats['errors']}, "
                     f"chunks={stats['chunks_created']}"
                 )

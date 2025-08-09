@@ -1,0 +1,69 @@
+# MCP Local RAG Ignore File
+# このファイルに記載されたパターンにマッチするファイルはインデックスから除外されます
+
+# 巨大なJSONファイル（データファイル）
+signals.json
+trades.json
+backtest_result.json
+
+# ログファイル
+*.log
+logs/
+
+# バックテスト結果（大量のデータ）
+backtest_results/
+results/*.json
+
+# キャッシュ・一時ファイル
+__pycache__/
+*.pyc
+.cache/
+.pytest_cache/
+
+# データファイル
+data/
+*.csv
+*.parquet
+*.h5
+*.db
+*.sqlite
+
+# モデルファイル
+*.pkl
+*.pth
+*.onnx
+*.h5
+models/
+
+# 画像・動画
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.avi
+images/
+videos/
+
+# アーカイブ
+*.zip
+*.tar
+*.gz
+*.rar
+
+# ビルド成果物
+dist/
+build/
+*.egg-info/
+
+# IDE設定
+.vscode/
+.idea/
+*.iml
+
+# OS固有
+.DS_Store
+Thumbs.db
+
+# ノートブックチェックポイント
+.ipynb_checkpoints/

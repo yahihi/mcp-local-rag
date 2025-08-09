@@ -70,6 +70,17 @@ def discover_files(
     dir_path = Path(dir_path)
     enabled = {e.lower() for e in enabled_extensions}
     excludes = list(exclude_dirs)
+    
+    # Load ignore patterns from .mcp-local-rag-ignore if exists
+    ignore_patterns = set()
+    ignore_file = dir_path / '.mcp-local-rag-ignore'
+    if ignore_file.exists():
+        with open(ignore_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    ignore_patterns.add(line)
+        logger.info(f"Loaded {len(ignore_patterns)} ignore patterns from {ignore_file}")
 
     def finalize(paths: Iterable[Path]) -> List[Path]:
         out: List[Path] = []
@@ -78,6 +89,29 @@ def discover_files(
                 p = Path(p)
                 if _is_excluded_parts(p, excludes):
                     continue
+                
+                # Check ignore patterns
+                should_ignore = False
+                if ignore_patterns:
+                    file_name = p.name
+                    for pattern in ignore_patterns:
+                        # Check filename match
+                        if fnmatch.fnmatch(file_name, pattern):
+                            should_ignore = True
+                            logger.debug(f"Ignoring {p.name} (matches pattern: {pattern})")
+                            break
+                        # Check path component match
+                        for part in p.parts:
+                            if fnmatch.fnmatch(part, pattern.rstrip('/')):
+                                should_ignore = True
+                                logger.debug(f"Ignoring {p} (path component matches: {pattern})")
+                                break
+                        if should_ignore:
+                            break
+                
+                if should_ignore:
+                    continue
+                    
                 if p.suffix.lower() in enabled:
                     out.append(p)
             except Exception:

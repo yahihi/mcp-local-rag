@@ -86,7 +86,10 @@ class VectorDB:
         collection_name: Optional[str] = None
     ) -> None:
         """Add documents with embeddings to the database"""
+        import time
         try:
+            start = time.perf_counter()
+            
             # Get the target collection
             collection = self.get_or_create_collection(collection_name) if collection_name else self.collection
             
@@ -97,14 +100,20 @@ class VectorDB:
             metadatas = [doc.get('metadata', {}) for doc in documents]
             
             # Add to collection
+            add_start = time.perf_counter()
             collection.add(
                 ids=ids,
                 documents=contents,
                 embeddings=embeddings,
                 metadatas=metadatas
             )
+            add_time = (time.perf_counter() - add_start) * 1000
             
-            logger.info(f"Added {len(documents)} documents to collection")
+            total_time = (time.perf_counter() - start) * 1000
+            logger.info(f"Added {len(documents)} documents to collection in {total_time:.1f}ms (DB write: {add_time:.1f}ms)")
+            
+            if total_time > 500:  # 500ms以上かかった場合警告
+                logger.warning(f"Slow DB write: {len(documents)} documents took {total_time:.1f}ms")
             
         except Exception as e:
             logger.error(f"Error adding documents: {e}")
