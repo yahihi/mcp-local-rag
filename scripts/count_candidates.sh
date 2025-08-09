@@ -13,27 +13,25 @@ if [ "$#" -lt 1 ]; then
   exit 1
 fi
 
-# Read config.json (no jq dependency; use Python if available)
-read_config() {
-  python3 - "$1" <<'PY' || true
+# Helpers to read JSON keys from a given config file
+read_config_file_key() {
+  local file="$1"; shift
+  local key="$1"; shift
+  if [ -f "$file" ]; then
+    python3 - "$file" "$key" <<'PY' || true
 import json,sys
-cfg=json.load(open('config.json'))
-key=sys.argv[1]
+path=sys.argv[1]
+key=sys.argv[2]
+cfg=json.load(open(path))
 for v in cfg.get(key, []):
     print(v)
 PY
+  fi
 }
 
-mapfile -t EXCLUDES < <(read_config exclude_dirs)
-mapfile -t EXTENSIONS < <(read_config file_extensions)
-
-# Fallback defaults if config keys missing
-if [ ${#EXTENSIONS[@]} -eq 0 ]; then
-  EXTENSIONS=(.py .md .json .yaml .yml .toml)
-fi
-if [ ${#EXCLUDES[@]} -eq 0 ]; then
-  EXCLUDES=(.git venv .venv env site-packages site_packages __pycache__ node_modules .pytest_cache .mypy_cache .ruff_cache dist build .next target logs log output outputs artifacts checkpoints data datasets)
-fi
+# Defaults when no config provided
+DEFAULT_EXT=(.py .md .json .yaml .yml .toml)
+DEFAULT_EXC=(.git venv .venv env site-packages site_packages __pycache__ node_modules .pytest_cache .mypy_cache .ruff_cache dist build .next target logs log output outputs artifacts checkpoints data datasets)
 
 have_fd() { command -v fd >/dev/null 2>&1; }
 
@@ -79,6 +77,22 @@ for ROOT in "$@"; do
     echo "[skip] $ROOT (not a directory)" >&2
     continue
   fi
+  # Load base repo config
+  mapfile -t EXCLUDES < <(read_config_file_key "$REPO_ROOT/config.json" exclude_dirs)
+  mapfile -t EXTENSIONS < <(read_config_file_key "$REPO_ROOT/config.json" file_extensions)
+  # Per-project override if present
+  PROJECT_CFG="$ROOT/.mcp-local-rag.json"
+  if [ -f "$PROJECT_CFG" ]; then
+    # Override arrays if keys present
+    mapfile -t EXC2 < <(read_config_file_key "$PROJECT_CFG" exclude_dirs)
+    mapfile -t EXT2 < <(read_config_file_key "$PROJECT_CFG" file_extensions)
+    if [ ${#EXC2[@]} -gt 0 ]; then EXCLUDES=("${EXC2[@]}"); fi
+    if [ ${#EXT2[@]} -gt 0 ]; then EXTENSIONS=("${EXT2[@]}"); fi
+  fi
+  # Apply defaults if still empty
+  if [ ${#EXTENSIONS[@]} -eq 0 ]; then EXTENSIONS=("${DEFAULT_EXT[@]}"); fi
+  if [ ${#EXCLUDES[@]} -eq 0 ]; then EXCLUDES=("${DEFAULT_EXC[@]}"); fi
+
   if have_fd; then
     CNT=$(count_with_fd "$ROOT")
     TOOL=fd

@@ -77,6 +77,21 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
                         break
                 except Exception as e:
                     logger.error(f"Error loading config from {search_path}: {e}")
+
+    # Environment-provided config path takes precedence (per-project override)
+    env_config_path = os.getenv("MCP_CONFIG_PATH")
+    if env_config_path:
+        cfg_path = Path(env_config_path)
+        if cfg_path.exists():
+            try:
+                with open(cfg_path, 'r') as f:
+                    env_cfg = json.load(f)
+                    default_config.update(env_cfg)
+                    logger.info(f"Loaded configuration override from MCP_CONFIG_PATH: {cfg_path}")
+            except Exception as e:
+                logger.error(f"Error loading MCP_CONFIG_PATH={cfg_path}: {e}")
+        else:
+            logger.warning(f"MCP_CONFIG_PATH set but file not found: {cfg_path}")
     
     # Override with environment variables
     env_overrides = {

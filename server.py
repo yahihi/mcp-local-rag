@@ -27,6 +27,7 @@ from indexer import FileIndexer
 from search import SearchEngine
 from vectordb import VectorDB
 from utils import load_config
+from discovery import resolve_project_config, effective_filters, discover_files
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -100,13 +101,6 @@ async def main():
     reindex_running = False  # Flag to prevent concurrent re-indexing
     shutdown_event = asyncio.Event()  # Event for graceful shutdown
 
-    # Determine enabled extensions from config for filtering and command construction
-    try:
-        configured_exts = [str(e).lower() for e in config.get('file_extensions', []) if isinstance(e, str)]
-        enabled_exts = sorted({e for e in configured_exts if e.startswith('.')})
-    except Exception:
-        enabled_exts = []
-
     # Create timestamp file for tracking last check
     timestamp_file = Path(tempfile.gettempdir()) / 'mcp_local_rag_last_check'
     if not timestamp_file.exists():
@@ -138,94 +132,52 @@ async def main():
                 
                 for directory in watched_dirs:
                     try:
-                        # Find files modified since last check
-                        if file_search_cmd == 'fd':
-                            # fd respects .gitignore by default. Use glob for extension filtering.
-                            delta = int(time.time() - timestamp_file.stat().st_mtime)
-                            search_cmd = ['fd', '--type', 'f', '--changed-within', f"{delta}s", '--glob', '--ignore-case']
-                            # Add excludes from config if present
-                            for exc in config.get('exclude_dirs', []) or []:
-                                search_cmd.extend(['--exclude', str(exc)])
-                            # Build single glob pattern like '*.{py,js,ts}' if extensions configured
-                            if enabled_exts:
-                                brace = ','.join(ext.lstrip('.') for ext in enabled_exts)
-                                pattern = f"*.{{{brace}}}"
-                            else:
-                                pattern = '*'
-                            search_cmd.extend([pattern, directory])
-                        elif file_search_cmd == 'find':
-                            # Build a name-filtered find command using -name patterns joined with -o
-                            search_cmd = ['find', directory]
-                            # Type first to keep expression concise
-                            search_cmd.extend(['-type', 'f'])
-                            # Newer-than timestamp
-                            search_cmd.extend(['-newer', str(timestamp_file)])
-                            # Add name filters if configured
-                            if enabled_exts:
-                                # Build: \( -name "*.py" -o -name "*.js" ... \)
-                                name_group = []
-                                for ext in enabled_exts:
-                                    name_group.extend(['-name', f"*.{ext.lstrip('.')}" , '-o'])
-                                # Remove trailing -o
-                                if name_group:
-                                    name_group = name_group[:-1]
-                                search_cmd.extend(['\('] + name_group + ['\)'])
-                        else:
-                            logger.warning("No file search command available, skipping re-index")
-                            return
-                        
-                        logger.info(f"Running {file_search_cmd} command: {' '.join(search_cmd)}")
-                        result = subprocess.run(
-                            search_cmd,
-                            capture_output=True,
-                            text=True,
-                            check=False  # Don't raise exception on non-zero return
+                        # Resolve per-project config and filters
+                        dir_path = Path(directory).resolve()
+                        dir_config = resolve_project_config(config, dir_path)
+                        dir_enabled_exts, dir_excludes = effective_filters(dir_config, FileIndexer.SUPPORTED_EXTENSIONS.keys())
+
+                        # Discover changed files using centralized discovery
+                        delta = int(time.time() - timestamp_file.stat().st_mtime)
+                        changed_paths = discover_files(
+                            dir_path=dir_path,
+                            enabled_extensions=dir_enabled_exts,
+                            exclude_dirs=dir_excludes,
+                            changed_within_seconds=delta,
+                            since_timestamp_file=timestamp_file,
                         )
-                        
-                        # Check for command not found error
-                        if result.returncode == 127 or 'not found' in result.stderr.lower():
-                            logger.error(f"{file_search_cmd} command not available on this system")
-                            logger.info("Periodic re-indexing will be disabled")
-                            return  # Exit the periodic_reindex function
-                        
-                        logger.info(f"{file_search_cmd.capitalize()} command result - returncode: {result.returncode}, stdout: '{result.stdout}', stderr: '{result.stderr}'")
-                        
-                        if result.returncode == 0 and result.stdout:
-                            changed_files = result.stdout.strip().split('\n')
-                            changed_files = [f for f in changed_files if f]  # Remove empty strings
-                            
-                            # Filter by configured extensions and exclude rules as a final safeguard
-                            enabled_set = set(enabled_exts) if enabled_exts else set(indexer.SUPPORTED_EXTENSIONS.keys())
-                            supported_files = []
-                            for file_path in changed_files:
-                                p = Path(file_path)
-                                if indexer._is_excluded(p):
-                                    continue
-                                if p.suffix.lower() in enabled_set:
-                                    supported_files.append(file_path)
-                            
-                            if supported_files:
-                                logger.info(f"Found {len(supported_files)} changed files in {directory}")
-                                any_files_processed = True
-                                
-                                # Get collection name for this directory
-                                import re
-                                dir_path = Path(directory).resolve()
-                                collection_name = re.sub(r'[^a-zA-Z0-9_-]', '_', dir_path.name)
-                                if not collection_name:
-                                    collection_name = "default"
-                                
-                                # Index each changed file with the appropriate collection
-                                for file_path in supported_files:
+
+                        if changed_paths:
+                            logger.info(f"Found {len(changed_paths)} changed files in {directory}")
+                            any_files_processed = True
+
+                            # Collection per directory
+                            import re
+                            collection_name = re.sub(r'[^a-zA-Z0-9_-]', '_', dir_path.name) or 'default'
+
+                            # Temporarily align indexer filters so index_file accepts the files
+                            old_enabled = set(getattr(indexer, 'enabled_extensions', set(FileIndexer.SUPPORTED_EXTENSIONS.keys())))
+                            old_excludes = set(getattr(indexer, 'exclude_dir_patterns', set()))
+                            indexer.enabled_extensions = set(dir_enabled_exts)
+                            indexer.exclude_dir_patterns = set(dir_excludes)
+
+                            try:
+                                for file_path in (str(p) for p in changed_paths):
                                     try:
                                         chunks = await indexer.index_file(file_path, force_reindex=True, collection_name=collection_name)
                                         if chunks > 0:
                                             logger.info(f"Re-indexed {file_path}: {chunks} chunks in collection '{collection_name}'")
                                     except Exception as e:
                                         logger.error(f"Error indexing {file_path}: {e}")
-                            else:
-                                logger.debug(f"No changed files in {directory}")
+                            finally:
+                                indexer.enabled_extensions = old_enabled
+                                indexer.exclude_dir_patterns = old_excludes
+                        else:
+                            logger.debug(f"No changed files in {directory}")
                         
+                        # Restore indexer filters after this directory
+                        indexer.enabled_extensions = set(old_enabled)
+                        indexer.exclude_dir_patterns = set(old_excludes)
                     except Exception as e:
                         logger.error(f"Error checking directory {directory}: {e}")
                 

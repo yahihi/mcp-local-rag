@@ -16,6 +16,7 @@ import asyncio
 import sys
 import os
 from pathlib import Path
+import argparse
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
@@ -33,13 +34,17 @@ logger = logging.getLogger(__name__)
 async def main():
     """Create initial index for specified or configured directories"""
     
-    # Load configuration
-    config = load_config()
+    parser = argparse.ArgumentParser(description="Initial index setup for MCP Local RAG")
+    parser.add_argument("directories", nargs="*", help="Directories to index (optional; otherwise from config)")
+    parser.add_argument("--config", "-c", dest="config_path", help="Path to config JSON (overrides global)")
+    args = parser.parse_args()
+
+    # Load configuration (with optional path)
+    config = load_config(args.config_path)
     
     # Get directories from command line args or config
-    if len(sys.argv) > 1:
-        # Use command line arguments
-        watch_dirs = sys.argv[1:]
+    if args.directories:
+        watch_dirs = args.directories
         print(f"📁 Using directories from command line arguments")
     else:
         # Fall back to config.json (prefer top-level 'watch_directories')
@@ -61,9 +66,6 @@ async def main():
     for dir in watch_dirs:
         print(f"  - {dir}")
     
-    # Initialize indexer
-    indexer = FileIndexer(config)
-    
     # Index each directory
     total_stats = {
         "files_processed": 0,
@@ -78,7 +80,23 @@ async def main():
             
         print(f"\n🔍 Indexing {directory}...")
         try:
-            stats = await indexer.index_directory(directory)
+            # Per-project config override if present
+            project_cfg_path = Path(directory) / '.mcp-local-rag.json'
+            if project_cfg_path.exists():
+                try:
+                    import json
+                    with open(project_cfg_path) as f:
+                        override = json.load(f)
+                    cfg = dict(config)
+                    cfg.update(override)
+                    idx = FileIndexer(cfg)
+                    logger.info(f"Using project config: {project_cfg_path}")
+                except Exception as e:
+                    print(f"  ⚠️  Could not load project config {project_cfg_path}: {e}")
+                    idx = FileIndexer(config)
+            else:
+                idx = FileIndexer(config)
+            stats = await idx.index_directory(directory)
             print(f"  ✅ Processed {stats['files_processed']} files, created {stats['chunks_created']} chunks")
             
             total_stats["files_processed"] += stats["files_processed"]

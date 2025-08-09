@@ -19,6 +19,7 @@ from watchdog.observers import Observer
 
 from embeddings import EmbeddingGenerator
 from vectordb import VectorDB
+from discovery import discover_files
 
 logger = logging.getLogger(__name__)
 
@@ -367,61 +368,14 @@ class FileIndexer:
             # Default to config-enabled extensions
             valid_extensions = list(self.enabled_extensions)
         
-        # Discover files using fd or find if available; fallback to rglob
-        files_to_index: List[Path] = []
-
-        def _finalize_filter(candidates: List[str]) -> List[Path]:
-            out: List[Path] = []
-            for s in candidates:
-                try:
-                    p = Path(s)
-                    if self._is_excluded(p):
-                        continue
-                    if p.suffix.lower() in valid_extensions:
-                        out.append(p)
-                except Exception:
-                    continue
-            return out
-
-        try:
-            if shutil.which('fd'):
-                # fd respects .gitignore by default; use glob brace pattern
-                names = sorted(e.lstrip('.') for e in valid_extensions)
-                pattern = f"*.{{{','.join(names)}}}" if names else '*'
-                cmd = ['fd', '--type', 'f', '--glob', '--ignore-case']
-                for exc in self.exclude_dir_patterns:
-                    cmd.extend(['--exclude', str(exc)])
-                cmd.extend([pattern, str(path)])
-                res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-                if res.returncode == 0 and res.stdout:
-                    files_to_index = _finalize_filter([line for line in res.stdout.splitlines() if line])
-                else:
-                    files_to_index = []
-            elif shutil.which('find'):
-                cmd = ['find', str(path), '-type', 'f']
-                if valid_extensions:
-                    name_group: List[str] = []
-                    for ext in valid_extensions:
-                        name_group.extend(['-name', f"*{ext}", '-o'])
-                    if name_group:
-                        name_group = name_group[:-1]
-                        cmd.extend(['\('] + name_group + ['\)'])
-                res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-                if res.returncode == 0 and res.stdout:
-                    files_to_index = _finalize_filter([line for line in res.stdout.splitlines() if line])
-                else:
-                    files_to_index = []
-            else:
-                raise RuntimeError('fd/find not available')
-        except Exception:
-            # Fallback to Python rglob
-            tmp: List[Path] = []
-            for ext in valid_extensions:
-                try:
-                    tmp.extend(path.rglob(f"*{ext}"))
-                except Exception:
-                    continue
-            files_to_index = [f for f in tmp if not self._is_excluded(f)]
+        # Discover files (full scan uses Python rglob inside utils.discover_files)
+        files_to_index = discover_files(
+            dir_path=path,
+            enabled_extensions=set(valid_extensions),
+            exclude_dirs=self.exclude_dir_patterns,
+            changed_within_seconds=None,
+            since_timestamp_file=None,
+        )
         
         logger.info(f"Found {len(files_to_index)} files to process")
         
