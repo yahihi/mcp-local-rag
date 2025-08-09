@@ -87,5 +87,40 @@ for ROOT in "$@"; do
     TOOL=find
   fi
   echo "${ROOT}: ${CNT} files (via ${TOOL})"
-done
 
+  # If only one root provided, show top-level breakdown
+  if [ "$#" -eq 1 ]; then
+    echo "Top-level breakdown (non-zero):"
+    # Count files directly under root
+    if [ "$TOOL" = "fd" ]; then
+      ROOT_FILES=$(fd -t f -d 1 $(printf ' -E %q' "${EXCLUDES[@]}") \
+        $(printf ' -e %q' "${EXTENSIONS[@]/#/}") . "$ROOT" 2>/dev/null | wc -l | tr -d ' ')
+    else
+      # find variant: maxdepth 1 and names
+      name=( )
+      for ext in "${EXTENSIONS[@]}"; do
+        [[ "$ext" == .* ]] && name+=( -name "*${ext}" -o )
+      done
+      [ ${#name[@]} -gt 0 ] && unset 'name[${#name[@]}-1]'
+      ROOT_FILES=$(find "$ROOT" -maxdepth 1 -type f \( "${name[@]}" \) -print | wc -l | tr -d ' ')
+    fi
+    [ "${ROOT_FILES}" != "0" ] && echo "  (root files): ${ROOT_FILES}"
+
+    # List immediate subdirectories and count per directory
+    while IFS= read -r child; do
+      base=$(basename "$child")
+      # Skip excluded directory names
+      skip=false
+      for pat in "${EXCLUDES[@]}"; do
+        if [[ "$base" == $pat ]]; then skip=true; break; fi
+      done
+      $skip && continue
+      if [ "$TOOL" = "fd" ]; then
+        subcnt=$(count_with_fd "$child")
+      else
+        subcnt=$(count_with_find "$child")
+      fi
+      [ "${subcnt}" != "0" ] && echo "  ${base}: ${subcnt}"
+    done < <(find "$ROOT" -mindepth 1 -maxdepth 1 -type d -print)
+  fi
+done

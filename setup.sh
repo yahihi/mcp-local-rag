@@ -62,6 +62,55 @@ print('  ✅ モデルのダウンロード完了！')
 echo ""
 echo "== STEP: 初回インデックス作成 =="
 echo "🔍 初回インデックスを作成中..."
+
+# 対象ディレクトリの決定（引数がなければ config.json を参照）
+TARGET_DIRS=("${ORIGINAL_ARGS[@]}")
+if [ ${#TARGET_DIRS[@]} -eq 0 ]; then
+    echo "📁 config.json から対象ディレクトリを取得します..."
+    mapfile -t TARGET_DIRS < <(python3 - <<'PY'
+import json, os
+cfg = json.load(open('config.json'))
+dirs = cfg.get('watch_directories') or cfg.get('auto_index', {}).get('watch_directories', [])
+for d in dirs:
+    if isinstance(d, str):
+        print(os.path.abspath(d))
+PY
+)
+fi
+
+# 対象ファイル件数の見積もり（fd/find + config 準拠）
+if [ ${#TARGET_DIRS[@]} -gt 0 ]; then
+    echo "== STEP: 対象ファイルの見積り =="
+    TOTAL=0
+    for D in "${TARGET_DIRS[@]}"; do
+        if [ -d "$D" ]; then
+            LINE=$(bash "$SCRIPT_DIR/scripts/count_candidates.sh" "$D" || true)
+            echo "$LINE"
+            CNT=$(echo "$LINE" | sed -nE 's/.*: ([0-9]+) files.*/\1/p' | tr -d ' ')
+            if [[ "$CNT" =~ ^[0-9]+$ ]]; then
+                TOTAL=$((TOTAL + CNT))
+            fi
+        else
+            echo "[skip] $D はディレクトリではありません"
+        fi
+    done
+    echo "📊 合計: ${TOTAL} files"
+    read -r -p "この内容でインデックスを進めますか? [y/N]: " ANSWER
+    ANS_LC=$(printf '%s' "$ANSWER" | tr '[:upper:]' '[:lower:]')
+    case "$ANS_LC" in
+        y|yes)
+            echo "▶ インデックス作成を続行します"
+            ;;
+        *)
+            echo "⏹ 処理を中止しました"
+            exit 0
+            ;;
+    esac
+else
+    echo "⚠️  config.json に watch_directories が設定されていません（または引数がありません）"
+    echo "    必要に応じて ./setup.sh /path/to/project を再実行してください"
+fi
+
 uv run --no-project python scripts/setup_index.py "${ORIGINAL_ARGS[@]}"
 
 echo ""

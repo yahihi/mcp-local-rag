@@ -30,6 +30,10 @@ class TestFileChangeHandler(unittest.TestCase):
             '.md', '.markdown', '.rst', '.txt', '.ini', '.cfg', '.conf',
             '.toml', '.env', '.gitignore', '.dockerignore', '.editorconfig'
         }
+        # Add enabled_extensions attribute (new in updated implementation)
+        self.mock_indexer.enabled_extensions = self.mock_indexer.SUPPORTED_EXTENSIONS
+        # Mock _is_excluded method
+        self.mock_indexer._is_excluded = MagicMock(return_value=False)
         
         # Create handler
         self.handler = FileChangeHandler(self.mock_indexer)

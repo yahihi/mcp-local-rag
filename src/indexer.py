@@ -7,6 +7,8 @@ import fnmatch
 import json
 import logging
 import os
+import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -133,6 +135,12 @@ class FileIndexer:
         }
         self.exclude_dir_patterns = set(config.get('exclude_dirs', list(default_excludes)))
 
+        # Determine enabled extensions from config (subset of supported); fallback to all supported
+        config_exts = [str(e).lower() for e in config.get('file_extensions', []) if isinstance(e, str)]
+        config_exts = [e for e in config_exts if e.startswith('.')]
+        enabled = [e for e in config_exts if e in self.SUPPORTED_EXTENSIONS]
+        self.enabled_extensions = set(enabled if enabled else self.SUPPORTED_EXTENSIONS.keys())
+
     def _is_excluded(self, path: Path) -> bool:
         """Return True if any path component matches an exclude pattern."""
         for part in path.parts:
@@ -246,8 +254,9 @@ class FileIndexer:
         
         # Get file extension and language
         ext = path.suffix.lower()
-        if ext not in self.SUPPORTED_EXTENSIONS:
-            logger.warning(f"Unsupported file type: {ext}")
+        # Respect config-enabled extensions (subset of supported)
+        if ext not in self.enabled_extensions:
+            logger.warning(f"Unsupported or disabled file type: {ext}")
             return 0
         
         language = self.SUPPORTED_EXTENSIONS[ext]
@@ -352,17 +361,67 @@ class FileIndexer:
         
         # Determine extensions to process
         if extensions:
-            valid_extensions = [ext for ext in extensions if ext in self.SUPPORTED_EXTENSIONS]
+            # Use provided list but restrict to config-enabled extensions
+            valid_extensions = [ext.lower() for ext in extensions if ext.lower() in self.enabled_extensions]
         else:
-            valid_extensions = list(self.SUPPORTED_EXTENSIONS.keys())
+            # Default to config-enabled extensions
+            valid_extensions = list(self.enabled_extensions)
         
-        # Find all files to index
-        files_to_index = []
-        for ext in valid_extensions:
-            files_to_index.extend(path.rglob(f"*{ext}"))
-        
-        # Exclude directories based on configured patterns
-        files_to_index = [f for f in files_to_index if not self._is_excluded(f)]
+        # Discover files using fd or find if available; fallback to rglob
+        files_to_index: List[Path] = []
+
+        def _finalize_filter(candidates: List[str]) -> List[Path]:
+            out: List[Path] = []
+            for s in candidates:
+                try:
+                    p = Path(s)
+                    if self._is_excluded(p):
+                        continue
+                    if p.suffix.lower() in valid_extensions:
+                        out.append(p)
+                except Exception:
+                    continue
+            return out
+
+        try:
+            if shutil.which('fd'):
+                # fd respects .gitignore by default; use glob brace pattern
+                names = sorted(e.lstrip('.') for e in valid_extensions)
+                pattern = f"*.{{{','.join(names)}}}" if names else '*'
+                cmd = ['fd', '--type', 'f', '--glob', '--ignore-case']
+                for exc in self.exclude_dir_patterns:
+                    cmd.extend(['--exclude', str(exc)])
+                cmd.extend([pattern, str(path)])
+                res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                if res.returncode == 0 and res.stdout:
+                    files_to_index = _finalize_filter([line for line in res.stdout.splitlines() if line])
+                else:
+                    files_to_index = []
+            elif shutil.which('find'):
+                cmd = ['find', str(path), '-type', 'f']
+                if valid_extensions:
+                    name_group: List[str] = []
+                    for ext in valid_extensions:
+                        name_group.extend(['-name', f"*{ext}", '-o'])
+                    if name_group:
+                        name_group = name_group[:-1]
+                        cmd.extend(['\('] + name_group + ['\)'])
+                res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                if res.returncode == 0 and res.stdout:
+                    files_to_index = _finalize_filter([line for line in res.stdout.splitlines() if line])
+                else:
+                    files_to_index = []
+            else:
+                raise RuntimeError('fd/find not available')
+        except Exception:
+            # Fallback to Python rglob
+            tmp: List[Path] = []
+            for ext in valid_extensions:
+                try:
+                    tmp.extend(path.rglob(f"*{ext}"))
+                except Exception:
+                    continue
+            files_to_index = [f for f in tmp if not self._is_excluded(f)]
         
         logger.info(f"Found {len(files_to_index)} files to process")
         
@@ -418,7 +477,16 @@ class FileChangeHandler(FileSystemEventHandler):
     def on_modified(self, event):
         if not event.is_directory:
             file_path = Path(event.src_path)
-            if file_path.suffix.lower() in FileIndexer.SUPPORTED_EXTENSIONS:
+            # Skip excluded directories
+            if self.indexer._is_excluded(file_path):
+                return
+            # Allowed extensions from indexer (config-aware) or fallback to supported
+            ext = file_path.suffix.lower()
+            allowed = getattr(self.indexer, 'enabled_extensions', None)
+            if allowed is None:
+                allowed = getattr(FileIndexer, 'SUPPORTED_EXTENSIONS', {})
+            allowed_set = set(allowed.keys()) if isinstance(allowed, dict) else set(allowed)
+            if ext in allowed_set:
                 logger.info(f"File modified: {file_path}")
                 # Schedule reindexing (in production, use async task queue)
                 # asyncio.create_task(self.indexer.index_file(str(file_path)))
@@ -426,7 +494,14 @@ class FileChangeHandler(FileSystemEventHandler):
     def on_created(self, event):
         if not event.is_directory:
             file_path = Path(event.src_path)
-            if file_path.suffix.lower() in FileIndexer.SUPPORTED_EXTENSIONS:
+            if self.indexer._is_excluded(file_path):
+                return
+            ext = file_path.suffix.lower()
+            allowed = getattr(self.indexer, 'enabled_extensions', None)
+            if allowed is None:
+                allowed = getattr(FileIndexer, 'SUPPORTED_EXTENSIONS', {})
+            allowed_set = set(allowed.keys()) if isinstance(allowed, dict) else set(allowed)
+            if ext in allowed_set:
                 logger.info(f"File created: {file_path}")
                 # Schedule indexing
     

@@ -99,7 +99,14 @@ async def main():
     reindex_interval = config.get('reindex_interval_seconds', 300)
     reindex_running = False  # Flag to prevent concurrent re-indexing
     shutdown_event = asyncio.Event()  # Event for graceful shutdown
-    
+
+    # Determine enabled extensions from config for filtering and command construction
+    try:
+        configured_exts = [str(e).lower() for e in config.get('file_extensions', []) if isinstance(e, str)]
+        enabled_exts = sorted({e for e in configured_exts if e.startswith('.')})
+    except Exception:
+        enabled_exts = []
+
     # Create timestamp file for tracking last check
     timestamp_file = Path(tempfile.gettempdir()) / 'mcp_local_rag_last_check'
     if not timestamp_file.exists():
@@ -133,12 +140,36 @@ async def main():
                     try:
                         # Find files modified since last check
                         if file_search_cmd == 'fd':
-                            # fd respects .gitignore by default
-                            search_cmd = ['fd', '--type', 'f', '--changed-within', 
-                                        f"{int(time.time() - timestamp_file.stat().st_mtime)}s",
-                                        '.', directory]
+                            # fd respects .gitignore by default. Use glob for extension filtering.
+                            delta = int(time.time() - timestamp_file.stat().st_mtime)
+                            search_cmd = ['fd', '--type', 'f', '--changed-within', f"{delta}s", '--glob', '--ignore-case']
+                            # Add excludes from config if present
+                            for exc in config.get('exclude_dirs', []) or []:
+                                search_cmd.extend(['--exclude', str(exc)])
+                            # Build single glob pattern like '*.{py,js,ts}' if extensions configured
+                            if enabled_exts:
+                                brace = ','.join(ext.lstrip('.') for ext in enabled_exts)
+                                pattern = f"*.{{{brace}}}"
+                            else:
+                                pattern = '*'
+                            search_cmd.extend([pattern, directory])
                         elif file_search_cmd == 'find':
-                            search_cmd = ['find', directory, '-type', 'f', '-newer', str(timestamp_file)]
+                            # Build a name-filtered find command using -name patterns joined with -o
+                            search_cmd = ['find', directory]
+                            # Type first to keep expression concise
+                            search_cmd.extend(['-type', 'f'])
+                            # Newer-than timestamp
+                            search_cmd.extend(['-newer', str(timestamp_file)])
+                            # Add name filters if configured
+                            if enabled_exts:
+                                # Build: \( -name "*.py" -o -name "*.js" ... \)
+                                name_group = []
+                                for ext in enabled_exts:
+                                    name_group.extend(['-name', f"*.{ext.lstrip('.')}" , '-o'])
+                                # Remove trailing -o
+                                if name_group:
+                                    name_group = name_group[:-1]
+                                search_cmd.extend(['\('] + name_group + ['\)'])
                         else:
                             logger.warning("No file search command available, skipping re-index")
                             return
@@ -163,14 +194,15 @@ async def main():
                             changed_files = result.stdout.strip().split('\n')
                             changed_files = [f for f in changed_files if f]  # Remove empty strings
                             
-                            # Filter by supported extensions
+                            # Filter by configured extensions and exclude rules as a final safeguard
+                            enabled_set = set(enabled_exts) if enabled_exts else set(indexer.SUPPORTED_EXTENSIONS.keys())
                             supported_files = []
                             for file_path in changed_files:
-                                ext = Path(file_path).suffix.lower()
-                                if ext in indexer.SUPPORTED_EXTENSIONS:
-                                    # Skip files in excluded directories
-                                    if not any(exc in file_path for exc in config.get('exclude_dirs', [])):
-                                        supported_files.append(file_path)
+                                p = Path(file_path)
+                                if indexer._is_excluded(p):
+                                    continue
+                                if p.suffix.lower() in enabled_set:
+                                    supported_files.append(file_path)
                             
                             if supported_files:
                                 logger.info(f"Found {len(supported_files)} changed files in {directory}")
